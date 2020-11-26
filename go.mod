@@ -1,4 +1,4 @@
-module logspout-kafka
+module github.com/strava/logspout-kafka
 
 go 1.15
 
