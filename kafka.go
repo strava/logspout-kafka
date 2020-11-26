@@ -3,6 +3,7 @@ package kafka
 import (
 	"bytes"
 	"fmt"
+	"encoding/json"
 	"log"
 	"os"
 	"strconv"
@@ -85,6 +86,11 @@ func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
 func (a *KafkaAdapter) Stream(logstream chan *router.Message) {
 	defer a.producer.Close()
 	for rm := range logstream {
+		// filter for JSON messages here
+		if !json.Valid([]byte(rm.Data)) {
+			continue
+		}
+
 		message, err := a.formatMessage(rm)
 		if err != nil {
 			log.Println("kafka:", err)
