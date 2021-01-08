@@ -27,6 +27,50 @@ type KafkaAdapter struct {
 	tmpl     *template.Template
 }
 
+// Strava specific structs
+type DockerFields struct {
+	Name       string            `json:"name"`
+	CID        string            `json:"cid"`
+	Image      string            `json:"image"`
+	ImageTag   string            `json:"image_tag,omitempty"`
+	Source     string            `json:"source"`
+	DockerHost string            `json:"docker_host,omitempty"`
+	Labels     map[string]string `json:"labels,omitempty"`
+}
+
+type MarathonFields struct {
+	Id      *string `json:"id,omitempty"`
+	Version *string `json:"version,omitempty"`
+}
+
+type MesosFields struct {
+	TaskId *string `json:"task_id,omitempty"`
+}
+
+type LogstashFields struct {
+	Docker DockerFields `json:"docker"`
+}
+
+type StravaFields struct {
+	Service *string `json:` // .Container.Config.Labels.SERVICE
+	ScalaCommonsVersion *string `json:` // .Container.Config.Labels.STRAVA_COMMONS_VERSION
+	Type *string // put together from other fields
+}
+
+
+type LogstashMessage struct {
+	Type       string  `json:"type"`
+	Timestamp  string  `json:"@timestamp"`
+	Sourcehost *string `json:"host,omitempty"`
+
+	Data           map[string]interface{} `json:"data"`
+	DockerFields   DockerFields           `json:"docker"`
+	MarathonFields MarathonFields         `json:"marathon"`
+	MesosFields    MesosFields            `json:"mesos"`
+	StravaFields   StravaFields           `json:"mesos"`
+}
+
+
 func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
 	brokers := readBrokers(route.Address)
 	if len(brokers) == 0 {
@@ -123,10 +167,10 @@ func (a *KafkaAdapter) formatMessage(message *router.Message) (*sarama.ProducerM
 	var encoder sarama.Encoder
 	if a.tmpl != nil {
 		var w bytes.Buffer
-		if err := a.tmpl.Execute(&w, message); err != nil {
+		if err := a.tmpl.Execute(&w, message); err != nil { // where does a.tmpl.Execute output to?
 			return nil, err
 		}
-		encoder = sarama.ByteEncoder(w.Bytes())
+		encoder = sarama.ByteEncoder(w.Bytes()) // encode the bytes.Buffer
 	} else {
 		encoder = sarama.StringEncoder(message.Data)
 	}
