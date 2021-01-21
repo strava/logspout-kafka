@@ -85,13 +85,15 @@ func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
 
 func (a *KafkaAdapter) Stream(logstream chan *router.Message) {
 	defer a.producer.Close()
-	for rm := range logstream {
-		// filter for JSON messages here
-		if !json.Valid([]byte(rm.Data)) {
+	for router_message := range logstream {
+		// filter for JSON messages heres
+		if !json.Valid([]byte(router_message.Data)) { // double check this works
+			log.Println("was not valid JSON", router_message.Data)
 			continue
+			// why do krill/tessa logs get through?
 		}
 
-		message, err := a.formatMessage(rm)
+		message, err := a.formatMessage(router_message)
 		if err != nil {
 			log.Println("kafka:", err)
 			a.route.Close()
@@ -139,6 +141,7 @@ func (a *KafkaAdapter) formatMessage(message *router.Message) (*sarama.ProducerM
 		Value: encoder,
 	}, nil
 }
+
 
 func readBrokers(address string) []string {
 	if strings.Contains(address, "/") {
