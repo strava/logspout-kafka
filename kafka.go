@@ -2,8 +2,8 @@ package kafka
 
 import (
 	"bytes"
-	"fmt"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -34,7 +34,7 @@ type DockerFields struct {
 	Image      string            `json:"image"`
 	ImageTag   string            `json:"image_tag,omitempty"`
 	Source     string            `json:"source"`
-	DockerHost string            `json:"docker_host,omitempty"`
+	// DockerHost string            `json:"docker_host,omitempty"` // I think this is a redis specific thing?
 	Labels     map[string]string `json:"labels,omitempty"`
 }
 
@@ -51,15 +51,8 @@ type LogstashFields struct {
 	Docker DockerFields `json:"docker"`
 }
 
-type StravaFields struct {
-	Service *string `json:` // .Container.Config.Labels.SERVICE
-	ScalaCommonsVersion *string `json:` // .Container.Config.Labels.STRAVA_COMMONS_VERSION
-	Type *string // put together from other fields
-}
-
-
 type LogstashMessage struct {
-	Type       string  `json:"type"`
+	// Type       string  `json:"type"`
 	Timestamp  string  `json:"@timestamp"`
 	Sourcehost *string `json:"host,omitempty"`
 
@@ -67,9 +60,7 @@ type LogstashMessage struct {
 	DockerFields   DockerFields           `json:"docker"`
 	MarathonFields MarathonFields         `json:"marathon"`
 	MesosFields    MesosFields            `json:"mesos"`
-	StravaFields   StravaFields           `json:"mesos"`
 }
-
 
 func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
 	brokers := readBrokers(route.Address)
@@ -128,11 +119,13 @@ func (a *KafkaAdapter) Stream(logstream chan *router.Message) {
 	defer a.producer.Close()
 	for rm := range logstream {
 		// filter for JSON messages here
+		log.Println(rm)
 		if !json.Valid([]byte(rm.Data)) {
 			continue
 		}
 
-		message, err := a.formatMessage(rm)
+		// message, err := a.formatMessage(rm)
+		message, err := a.formatToLogstashMessage(rm)
 		if err != nil {
 			log.Println("kafka:", err)
 			a.route.Close()
@@ -163,6 +156,8 @@ func newConfig() *sarama.Config {
 	return config
 }
 
+/**
+// Original method
 func (a *KafkaAdapter) formatMessage(message *router.Message) (*sarama.ProducerMessage, error) {
 	var encoder sarama.Encoder
 	if a.tmpl != nil {
@@ -179,6 +174,72 @@ func (a *KafkaAdapter) formatMessage(message *router.Message) (*sarama.ProducerM
 		Topic: a.topic,
 		Value: encoder,
 	}, nil
+}
+**/
+
+/* *
+	Strava Logstash Message
+	Annotated with the marathon/mesos information that's only available on the particular instance
+	https://github.com/gliderlabs/logspout/blob/5abc836e8cabcaebd862d981fa7fbea8798ff4d0/router/types.go#L52
+	Logspout Message Struct
+
+	// Message is a log messages
+	type Message struct {
+		Container *docker.Container // the fsouza docker container
+		Source    string // stdout, stdin etc
+		Data      string // the actual data
+		Time      time.Time
+	}
+* */
+func (a *KafkaAdapter) formatToLogstashMessage(message *router.Message) (*sarama.ProducerMessage, error) {
+	var encoder sarama.Encoder
+
+	// ignore the template variable
+	image_name, image_tag := splitImage(m.Container.Config.Image)
+
+	logstash_message := LogstashMessage{
+		// Type:, // Might remove this
+		Data: message.data,
+		Timestamp: message.Time.Format(time.RFC3339Nano), // Use the timestamp in the message
+		Sourcehost: envValue("HOST", message.Container.Config.Env),
+		DockerFields: DockerFields{
+			CID: message.Container.ID[0:12],
+			Name: message.Container.Name[1:],
+			Image: image_name,
+			ImageTag: image_tag,
+			Source: message.Source,
+			// DockerHost: docker_host,
+		},
+		MarathonFields: MarathonFields{
+			Id: appId := envValue("MARATHON_APP_ID", m.Container.Config.Env),
+			Version: envValue("MARATHON_APP_VERSION", m.Container.Config.Env),
+		},
+		MesosFields: MesosFields{
+			// Set by marathon, but general to mesos
+			TaskId: envValue("MESOS_TASK_ID", m.Container.Config.Env),
+		}
+	}
+
+	encoder = sarama.ByteEncoder(json.Marshal(logstash_message))
+
+	// Note: ProducerMessage also has a "Timestamp" field
+	// https://github.com/Shopify/sarama/blob/65f0fec86aabe011db77ad641d31fddf14f3ca41/async_producer.go
+	return &sarama.ProducerMessage{
+		Topic: a.topic,
+		Value: encoder,
+	}, nil
+}
+
+func envValue(target string, envVars []string) *string {
+	for _, envVar := range envVars {
+		s := strings.Split(envVar, "=")
+		name := s[0]
+		value := s[len(s)-1]
+		if name == target {
+			return &value
+		}
+	}
+	return nil
 }
 
 func readBrokers(address string) []string {
