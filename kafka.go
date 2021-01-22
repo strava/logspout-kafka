@@ -194,32 +194,11 @@ func (a *KafkaAdapter) formatToLogstashMessage(message *router.Message) (*sarama
 	var encoder sarama.Encoder
 
 	// ignore the template variable
-	image_name, image_tag := splitImage(m.Container.Config.Image)
+	js, err := createLogstashMessage(message)
 
-	logstash_message := LogstashMessage{
-		// Type:, // Might remove this
-		Data:       message.data,
-		Timestamp:  message.Time.Format(time.RFC3339Nano), // Use the timestamp in the message
-		Sourcehost: envValue("HOST", message.Container.Config.Env),
-		DockerFields: DockerFields{
-			CID:      message.Container.ID[0:12],
-			Name:     message.Container.Name[1:],
-			Image:    image_name,
-			ImageTag: image_tag,
-			Source:   message.Source,
-			// DockerHost: docker_host,
-		},
-		MarathonFields: MarathonFields{
-			Id:      envValue("MARATHON_APP_ID", m.Container.Config.Env),
-			Version: envValue("MARATHON_APP_VERSION", m.Container.Config.Env),
-		},
-		MesosFields: MesosFields{
-			// Set by marathon, but general to mesos
-			TaskId: envValue("MESOS_TASK_ID", m.Container.Config.Env),
-		},
+	if err != nil {
+		encoder = sarama.ByteEncoder(js)
 	}
-
-	encoder = sarama.ByteEncoder(json.Marshal(logstash_message))
 
 	// Note: ProducerMessage also has a "Timestamp" field
 	// https://github.com/Shopify/sarama/blob/65f0fec86aabe011db77ad641d31fddf14f3ca41/async_producer.go
@@ -227,6 +206,50 @@ func (a *KafkaAdapter) formatToLogstashMessage(message *router.Message) (*sarama
 		Topic: a.topic,
 		Value: encoder,
 	}, nil
+}
+
+func createLogstashMessage(message *router.Message) ([]byte, error) {
+	imageName, imageTag := splitImage(message.Container.Config.Image)
+
+	var data map[string]interface{}
+	json.Unmarshal([]byte(message.Data), &data)
+
+	logstashMessage := LogstashMessage{
+		// Type:, // Might remove this
+		Data:       data,
+		Timestamp:  message.Time.Format(time.RFC3339Nano), // Use the timestamp in the message
+		Sourcehost: envValue("HOST", message.Container.Config.Env),
+		DockerFields: DockerFields{
+			CID:      message.Container.ID[0:12],
+			Name:     message.Container.Name[1:],
+			Image:    imageName,
+			ImageTag: imageTag,
+			Source:   message.Source,
+			// DockerHost: docker_host,
+		},
+		MarathonFields: MarathonFields{
+			Id:      envValue("MARATHON_APP_ID", message.Container.Config.Env),
+			Version: envValue("MARATHON_APP_VERSION", message.Container.Config.Env),
+		},
+		MesosFields: MesosFields{
+			// Set by marathon, but general to mesos
+			TaskId: envValue("MESOS_TASK_ID", message.Container.Config.Env),
+		},
+	}
+
+	return json.Marshal(logstashMessage)
+}
+
+func splitImage(image_tag string) (image string, tag string) {
+	colon := strings.LastIndex(image_tag, ":")
+	sep := strings.LastIndex(image_tag, "/")
+	if colon > -1 && sep < colon {
+		image = image_tag[0:colon]
+		tag = image_tag[colon+1:]
+	} else {
+		image = image_tag
+	}
+	return
 }
 
 func envValue(target string, envVars []string) *string {
