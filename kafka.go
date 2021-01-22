@@ -1,7 +1,6 @@
 package kafka
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -29,13 +28,13 @@ type KafkaAdapter struct {
 
 // Strava specific structs
 type DockerFields struct {
-	Name       string            `json:"name"`
-	CID        string            `json:"cid"`
-	Image      string            `json:"image"`
-	ImageTag   string            `json:"image_tag,omitempty"`
-	Source     string            `json:"source"`
+	Name     string `json:"name"`
+	CID      string `json:"cid"`
+	Image    string `json:"image"`
+	ImageTag string `json:"image_tag,omitempty"`
+	Source   string `json:"source"`
 	// DockerHost string            `json:"docker_host,omitempty"` // I think this is a redis specific thing?
-	Labels     map[string]string `json:"labels,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 type MarathonFields struct {
@@ -199,25 +198,25 @@ func (a *KafkaAdapter) formatToLogstashMessage(message *router.Message) (*sarama
 
 	logstash_message := LogstashMessage{
 		// Type:, // Might remove this
-		Data: message.data,
-		Timestamp: message.Time.Format(time.RFC3339Nano), // Use the timestamp in the message
+		Data:       message.data,
+		Timestamp:  message.Time.Format(time.RFC3339Nano), // Use the timestamp in the message
 		Sourcehost: envValue("HOST", message.Container.Config.Env),
 		DockerFields: DockerFields{
-			CID: message.Container.ID[0:12],
-			Name: message.Container.Name[1:],
-			Image: image_name,
+			CID:      message.Container.ID[0:12],
+			Name:     message.Container.Name[1:],
+			Image:    image_name,
 			ImageTag: image_tag,
-			Source: message.Source,
+			Source:   message.Source,
 			// DockerHost: docker_host,
 		},
 		MarathonFields: MarathonFields{
-			Id: appId := envValue("MARATHON_APP_ID", m.Container.Config.Env),
+			Id:      envValue("MARATHON_APP_ID", m.Container.Config.Env),
 			Version: envValue("MARATHON_APP_VERSION", m.Container.Config.Env),
 		},
 		MesosFields: MesosFields{
 			// Set by marathon, but general to mesos
 			TaskId: envValue("MESOS_TASK_ID", m.Container.Config.Env),
-		}
+		},
 	}
 
 	encoder = sarama.ByteEncoder(json.Marshal(logstash_message))
