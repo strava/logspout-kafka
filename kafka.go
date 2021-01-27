@@ -14,10 +14,6 @@ import (
 	"gopkg.in/Shopify/sarama.v1"
 )
 
-func init() {
-	router.AdapterFactories.Register(NewKafkaAdapter, "kafka")
-}
-
 type KafkaAdapter struct {
 	route    *router.Route
 	brokers  []string
@@ -59,6 +55,10 @@ type LogstashMessage struct {
 	DockerFields   DockerFields           `json:"docker"`
 	MarathonFields MarathonFields         `json:"marathon"`
 	MesosFields    MesosFields            `json:"mesos"`
+}
+
+func init() {
+	router.AdapterFactories.Register(NewKafkaAdapter, "kafka")
 }
 
 func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
@@ -117,12 +117,6 @@ func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
 func (a *KafkaAdapter) Stream(logstream chan *router.Message) {
 	defer a.producer.Close()
 	for rm := range logstream {
-		// filter for JSON messages here
-		log.Println(rm)
-		if !json.Valid([]byte(rm.Data)) {
-			continue
-		}
-
 		// message, err := a.formatMessage(rm)
 		message, err := a.formatToLogstashMessage(rm)
 		if err != nil {
@@ -196,9 +190,8 @@ func (a *KafkaAdapter) formatToLogstashMessage(message *router.Message) (*sarama
 	// ignore the template variable
 	js, err := createLogstashMessage(message)
 
-	if err != nil {
-		encoder = sarama.ByteEncoder(js)
-	}
+    log.Println(err)
+    encoder = sarama.StringEncoder(js)
 
 	// Note: ProducerMessage also has a "Timestamp" field
 	// https://github.com/Shopify/sarama/blob/65f0fec86aabe011db77ad641d31fddf14f3ca41/async_producer.go
