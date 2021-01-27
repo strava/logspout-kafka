@@ -1,25 +1,31 @@
 package kafka
 
 import (
+//	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"strconv"
 	"strings"
-	"text/template"
+//	"text/template"
 	"time"
 
 	"github.com/gliderlabs/logspout/router"
 	"gopkg.in/Shopify/sarama.v1"
 )
 
+
+func init() {
+	router.AdapterFactories.Register(NewKafkaAdapter, "kafka")
+}
+
 type KafkaAdapter struct {
 	route    *router.Route
 	brokers  []string
 	topic    string
 	producer sarama.AsyncProducer
-	tmpl     *template.Template
+//	tmpl     *template.Template
 }
 
 // Strava specific structs
@@ -57,10 +63,6 @@ type LogstashMessage struct {
 	MesosFields    MesosFields            `json:"mesos"`
 }
 
-func init() {
-	router.AdapterFactories.Register(NewKafkaAdapter, "kafka")
-}
-
 func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
 	brokers := readBrokers(route.Address)
 	if len(brokers) == 0 {
@@ -73,13 +75,13 @@ func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
 	}
 
 	var err error
-	var tmpl *template.Template
-	if text := os.Getenv("KAFKA_TEMPLATE"); text != "" {
-		tmpl, err = template.New("kafka").Parse(text)
-		if err != nil {
-			return nil, errorf("Couldn't parse Kafka message template. %v", err)
-		}
-	}
+//	var tmpl *template.Template
+//	if text := os.Getenv("KAFKA_TEMPLATE"); text != "" {
+//		tmpl, err = template.New("kafka").Parse(text)
+//		if err != nil {
+//			return nil, errorf("Couldn't parse Kafka message template. %v", err)
+//		}
+//	}
 
 	if os.Getenv("DEBUG") != "" {
 		log.Printf("Starting Kafka producer for address: %s, topic: %s.\n", brokers, topic)
@@ -110,7 +112,7 @@ func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
 		brokers:  brokers,
 		topic:    topic,
 		producer: producer,
-		tmpl:     tmpl,
+//		tmpl:     tmpl,
 	}, nil
 }
 
@@ -153,15 +155,15 @@ func newConfig() *sarama.Config {
 // Original method
 func (a *KafkaAdapter) formatMessage(message *router.Message) (*sarama.ProducerMessage, error) {
 	var encoder sarama.Encoder
-	if a.tmpl != nil {
-		var w bytes.Buffer
-		if err := a.tmpl.Execute(&w, message); err != nil { // where does a.tmpl.Execute output to?
-			return nil, err
-		}
-		encoder = sarama.ByteEncoder(w.Bytes()) // encode the bytes.Buffer
-	} else {
+	//if a.tmpl != nil {
+	//	var w bytes.Buffer
+	//	if err := a.tmpl.Execute(&w, message); err != nil { // where does a.tmpl.Execute output to?
+	//		return nil, err
+	//	}
+	//	encoder = sarama.ByteEncoder(w.Bytes()) // encode the bytes.Buffer
+	// } else {
 		encoder = sarama.StringEncoder(message.Data)
-	}
+	// }
 
 	return &sarama.ProducerMessage{
 		Topic: a.topic,
