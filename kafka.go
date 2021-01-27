@@ -85,6 +85,7 @@ func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
 func (a *KafkaAdapter) Stream(logstream chan *router.Message) {
 	defer a.producer.Close()
 	for rm := range logstream {
+        log.Println(rm)
 		message, err := a.formatMessage(rm)
 		if err != nil {
 			log.Println("kafka:", err)
