@@ -1,9 +1,8 @@
 package kafka
 
 import (
-	"bytes"
-	"fmt"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -25,6 +24,39 @@ type KafkaAdapter struct {
 	topic    string
 	producer sarama.AsyncProducer
 	tmpl     *template.Template
+}
+
+// Strava specific structs
+type DockerFields struct {
+	Name     string            `json:"name"`
+	CID      string            `json:"cid"`
+	Image    string            `json:"image"`
+	ImageTag string            `json:"image_tag,omitempty"`
+	Source   string            `json:"source"`
+	Labels   map[string]string `json:"labels,omitempty"`
+}
+
+type MarathonFields struct {
+	Id      *string `json:"id,omitempty"`
+	Version *string `json:"version,omitempty"`
+}
+
+type MesosFields struct {
+	TaskId *string `json:"task_id,omitempty"`
+}
+
+type LogstashFields struct {
+	Docker DockerFields `json:"docker"`
+}
+
+type LogstashMessage struct {
+	Timestamp  string  `json:"@timestamp"`
+	Sourcehost *string `json:"host,omitempty"`
+
+	Data           map[string]interface{} `json:"data"`
+	DockerFields   DockerFields           `json:"docker"`
+	MarathonFields MarathonFields         `json:"marathon"`
+	MesosFields    MesosFields            `json:"mesos"`
 }
 
 func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
@@ -88,7 +120,7 @@ func (a *KafkaAdapter) Stream(logstream chan *router.Message) {
 			continue
 		}
 
-		message, err := a.formatMessage(rm)
+		message, err := a.formatToLogstashMessage(rm)
 		if err != nil {
 			log.Println("kafka:", err)
 			a.route.Close()
@@ -119,22 +151,98 @@ func newConfig() *sarama.Config {
 	return config
 }
 
-func (a *KafkaAdapter) formatMessage(message *router.Message) (*sarama.ProducerMessage, error) {
+/* *
+	Strava Logstash Message
+	Annotated with the marathon/mesos information that's only available on the particular instance
+	https://github.com/gliderlabs/logspout/blob/5abc836e8cabcaebd862d981fa7fbea8798ff4d0/router/types.go#L52
+	Logspout Message Struct
+
+	// Message is a log messages
+	type Message struct {
+		Container *docker.Container // the fsouza docker container
+		Source    string // stdout, stdin etc
+		Data      string // the actual data
+		Time      time.Time
+	}
+* */
+func (a *KafkaAdapter) formatToLogstashMessage(message *router.Message) (*sarama.ProducerMessage, error) {
 	var encoder sarama.Encoder
-	if a.tmpl != nil {
-		var w bytes.Buffer
-		if err := a.tmpl.Execute(&w, message); err != nil {
-			return nil, err
-		}
-		encoder = sarama.ByteEncoder(w.Bytes())
-	} else {
-		encoder = sarama.StringEncoder(message.Data)
+
+	js, err := createLogstashMessage(message)
+
+	if err != nil {
+		return nil, err
 	}
 
+	encoder = sarama.ByteEncoder(js)
+
+	// Note: ProducerMessage also has a "Timestamp" field
+	// https://github.com/Shopify/sarama/blob/65f0fec86aabe011db77ad641d31fddf14f3ca41/async_producer.go
 	return &sarama.ProducerMessage{
 		Topic: a.topic,
 		Value: encoder,
 	}, nil
+}
+
+func createLogstashMessage(message *router.Message) ([]byte, error) {
+	imageName, imageTag := splitImage(message.Container.Config.Image)
+	host := envValue("HOST", message.Container.Config.Env)
+
+	if host == nil {
+		host = &message.Container.Config.Hostname
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal([]byte(message.Data), &data); err != nil {
+		return nil, err
+	}
+
+	logstashMessage := LogstashMessage{
+		Data:       data,
+		Timestamp:  message.Time.Format(time.RFC3339Nano),
+		Sourcehost: host,
+		DockerFields: DockerFields{
+			CID:      message.Container.ID[0:12],
+			Name:     message.Container.Name[1:],
+			Image:    imageName,
+			ImageTag: imageTag,
+			Source:   message.Source,
+		},
+		MarathonFields: MarathonFields{
+			Id:      envValue("MARATHON_APP_ID", message.Container.Config.Env),
+			Version: envValue("MARATHON_APP_VERSION", message.Container.Config.Env),
+		},
+		MesosFields: MesosFields{
+			// Set by marathon, but general to mesos
+			TaskId: envValue("MESOS_TASK_ID", message.Container.Config.Env),
+		},
+	}
+
+	return json.Marshal(logstashMessage)
+}
+
+func splitImage(image_tag string) (image string, tag string) {
+	colon := strings.LastIndex(image_tag, ":")
+	sep := strings.LastIndex(image_tag, "/")
+	if colon > -1 && sep < colon {
+		image = image_tag[0:colon]
+		tag = image_tag[colon+1:]
+	} else {
+		image = image_tag
+	}
+	return
+}
+
+func envValue(target string, envVars []string) *string {
+	for _, envVar := range envVars {
+		s := strings.Split(envVar, "=")
+		name := s[0]
+		value := s[len(s)-1]
+		if name == target {
+			return &value
+		}
+	}
+	return nil
 }
 
 func readBrokers(address string) []string {
