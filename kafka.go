@@ -115,16 +115,25 @@ func NewKafkaAdapter(route *router.Route) (router.LogAdapter, error) {
 func (a *KafkaAdapter) Stream(logstream chan *router.Message) {
 	defer a.producer.Close()
 	for rm := range logstream {
-		// filter for JSON messages here
+		/*
+		 * We are only accepting JSON formatted logs for now.
+		 * This is a holdover from logspout-redis,
+		 * where the thought was that using JSON would distinguish
+		 * the logs that we want intentionally logged.
+		 * We will probably revisit this in the future.
+		 */
 		if !json.Valid([]byte(rm.Data)) {
 			continue
 		}
 
 		message, err := a.formatToLogstashMessage(rm)
 		if err != nil {
-			log.Println("kafka:", err)
-			a.route.Close()
-			break
+			errorf("Error encountered when trying to format to LogstashMessage %v", err)
+			/* Occasionally, there are logs that are lines of integers
+			* that sneaks by the `json.Valid()` that we don't want ingested.
+			* We want to skip those messages so we are continuing here.
+			 */
+			continue
 		}
 
 		a.producer.Input() <- message
